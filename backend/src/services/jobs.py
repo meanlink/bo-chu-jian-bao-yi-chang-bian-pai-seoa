@@ -2,10 +2,16 @@ import time
 from fastapi import HTTPException
 from redis import Redis
 from src.config.settings import REDIS_URL
-from src.models import Dataset, Job
+from src.models import Dataset, Job, IngestionBatch
 from src.services.business import metadata
 def create(db, data, user):
-    if not db.get(Dataset,data.dataset_id): raise HTTPException(404,'数据批次不存在')
+    dataset=db.get(Dataset,data.dataset_id)
+    if not dataset: raise HTTPException(404,'数据批次不存在')
+    # 分析只读取已发布批次：待审核区数据不进入分析
+    if not dataset.ingestion_batch_id: raise HTTPException(409,'该业务批次缺少发布依据，不能用于分析；请先在接入审核区完成发布')
+    batch=db.get(IngestionBatch,dataset.ingestion_batch_id)
+    if not batch or batch.status!='published' or batch.published_dataset_id!=dataset.id:
+        raise HTTPException(409,'该业务批次尚未发布或发布依据失效，分析仅读取已发布批次')
     allowed={p['key']:p for p in metadata().get('parameters',[])}
     if set(data.params)-set(allowed): raise HTTPException(422,'包含未知分析参数')
     params={k:p['default'] for k,p in allowed.items()}

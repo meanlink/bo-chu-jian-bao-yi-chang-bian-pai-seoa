@@ -2,21 +2,20 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from src.config.database import get_db
 from src.models import Dataset
-from src.schemas.dataset import DatasetInput
-from src.middlewares.auth import current_user, can_write
-from src.services import datasets
-from src.services.audit import record
+from src.middlewares.auth import current_user
 from src.utils.serialization import dataset_dict
 router=APIRouter(prefix='/datasets')
 @router.get('')
 def listing(db=Depends(get_db),u=Depends(current_user)):
-    return [dataset_dict(d) for d in db.scalars(select(Dataset).order_by(Dataset.id.desc()))]
+    # 仅返回已发布业务批次（待审核区数据不对外可见为业务批次）
+    rows=db.scalars(select(Dataset).where(Dataset.ingestion_batch_id.isnot(None)).order_by(Dataset.id.desc()))
+    return [dataset_dict(d) for d in rows]
 @router.post('',status_code=201)
-def create(data:DatasetInput,db=Depends(get_db),u=Depends(can_write)):
-    d=datasets.create(db,data); record(db,u.email,'dataset.create',{'id':d.id,'rows':len(d.records)})
-    db.commit(); return dataset_dict(d)
+def create():
+    # 直建入口已废止：原始文件必须先进待审核区，审核通过后由发布动作生成业务批次
+    raise HTTPException(410,'直建数据批次入口已废止，请使用 /ingestion-batches 上传原文并完成审核发布')
 @router.get('/{id}')
 def detail(id:int,db=Depends(get_db),u=Depends(current_user)):
     d=db.get(Dataset,id)
-    if not d:raise HTTPException(404,'数据批次不存在')
+    if not d or d.ingestion_batch_id is None:raise HTTPException(404,'已发布数据批次不存在')
     return {**dataset_dict(d),'records':d.records}
